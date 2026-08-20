@@ -1,7 +1,6 @@
 {
-  "name": "discord-server-transfer",
+  "name": "discord-transfer-bot",
   "version": "1.0.0",
-  "description": "Discord server structure transfer bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,8 +8,5 @@
   "dependencies": {
     "discord.js": "^14.21.0",
     "express": "^5.1.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }
