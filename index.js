@@ -13,6 +13,8 @@ const {
 } = require("discord.js");
 
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 
 // =====================================================
 // CONFIG
@@ -37,7 +39,9 @@ if (!CLIENT_ID) {
 
 const client = new Client({
     intents: [
-        GatewayIntentBits.Guilds
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
     ]
 });
 
@@ -54,9 +58,7 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
     res.json({
         online: true,
-        bot: client.user
-            ? client.user.tag
-            : null
+        bot: client.user ? client.user.tag : null
     });
 });
 
@@ -75,13 +77,61 @@ const rest = new REST({
 }).setToken(TOKEN);
 
 // =====================================================
+// DATA
+// =====================================================
+
+const DATA_FILE = path.join(__dirname, "data.json");
+
+let data = {
+    buildTests: {},
+    transfers: {}
+};
+
+function loadData() {
+    try {
+        if (fs.existsSync(DATA_FILE)) {
+            data = JSON.parse(
+                fs.readFileSync(DATA_FILE, "utf8")
+            );
+        }
+    } catch (error) {
+        console.log(
+            "⚠️ Could not load data.json:",
+            error.message
+        );
+    }
+}
+
+function saveData() {
+    try {
+        fs.writeFileSync(
+            DATA_FILE,
+            JSON.stringify(data, null, 2)
+        );
+    } catch (error) {
+        console.log(
+            "❌ Could not save data.json:",
+            error.message
+        );
+    }
+}
+
+loadData();
+
+// =====================================================
 // PENDING TRANSFERS
 // =====================================================
 
 const pendingTransfers = new Map();
 
 // =====================================================
-// COMMAND
+// PENDING BUILD TESTS
+// =====================================================
+
+const pendingBuildTests = new Map();
+
+// =====================================================
+// SLASH COMMAND
 // =====================================================
 
 const commands = [
@@ -112,7 +162,7 @@ const commands = [
 ];
 
 // =====================================================
-// REGISTER COMMAND
+// REGISTER COMMANDS
 // =====================================================
 
 async function registerCommands() {
@@ -174,9 +224,7 @@ client.once(
 // GET SOURCE GUILD
 // =====================================================
 
-async function getSourceGuild(
-    serverId
-) {
+async function getSourceGuild(serverId) {
 
     try {
 
@@ -202,9 +250,7 @@ async function getSourceGuild(
 // GET ROLES
 // =====================================================
 
-async function getSourceRoles(
-    serverId
-) {
+async function getSourceRoles(serverId) {
 
     try {
 
@@ -236,9 +282,7 @@ async function getSourceRoles(
 // GET CHANNELS
 // =====================================================
 
-async function getSourceChannels(
-    serverId
-) {
+async function getSourceChannels(serverId) {
 
     try {
 
@@ -267,7 +311,7 @@ async function getSourceChannels(
 }
 
 // =====================================================
-// COPY PERMISSIONS
+// PERMISSION OVERWRITES
 // =====================================================
 
 function convertOverwrites(
@@ -288,14 +332,12 @@ function convertOverwrites(
         of sourceOverwrites
     ) {
 
-        // Only copy role permissions
         if (overwrite.type !== 0) {
             continue;
         }
 
         let targetRoleId;
 
-        // @everyone
         if (
             overwrite.id ===
             sourceGuildId
@@ -352,19 +394,15 @@ async function transferServer(
     const stats = {
 
         roles: 0,
-
         rolesFailed: 0,
 
         categories: 0,
-
         categoriesFailed: 0,
 
         channels: 0,
-
         channelsFailed: 0,
 
         name: false,
-
         icon: false
 
     };
@@ -394,7 +432,7 @@ async function transferServer(
         stats.name = true;
 
         console.log(
-            `🏷️ Server name copied`
+            "🏷️ Server name copied"
         );
 
     } catch (error) {
@@ -428,12 +466,6 @@ async function transferServer(
 
             console.log(
                 "🖼️ Server icon copied"
-            );
-
-        } else {
-
-            console.log(
-                "ℹ️ Source server has no icon"
             );
         }
 
@@ -510,15 +542,6 @@ async function transferServer(
 
                 stats.roles++;
 
-                console.log(
-                    `✅ Role created: ${sourceRole.name}`
-                );
-
-            } else {
-
-                console.log(
-                    `↪️ Role already exists: ${sourceRole.name}`
-                );
             }
 
             roleMap.set(
@@ -531,7 +554,8 @@ async function transferServer(
             stats.rolesFailed++;
 
             console.log(
-                `❌ Role failed: ${sourceRole.name} - ${error.message}`
+                `❌ Role failed: ${sourceRole.name}`,
+                error.message
             );
         }
     }
@@ -583,20 +607,13 @@ async function transferServer(
 
             const overwrites =
                 convertOverwrites(
-
                     sourceCategory.permission_overwrites,
-
                     roleMap,
-
                     sourceGuild.id,
-
                     targetGuild.id
-
                 );
 
-            if (
-                overwrites.length > 0
-            ) {
+            if (overwrites.length > 0) {
 
                 await targetCategory
                     .permissionOverwrites
@@ -608,16 +625,13 @@ async function transferServer(
 
             stats.categories++;
 
-            console.log(
-                `✅ Category created: ${sourceCategory.name}`
-            );
-
         } catch (error) {
 
             stats.categoriesFailed++;
 
             console.log(
-                `❌ Category failed: ${sourceCategory.name} - ${error.message}`
+                `❌ Category failed: ${sourceCategory.name}`,
+                error.message
             );
         }
     }
@@ -647,13 +661,11 @@ async function transferServer(
         try {
 
             const supportedTypes = [
-
-                0,  // TEXT
-                2,  // VOICE
-                5,  // ANNOUNCEMENT
-                13, // STAGE
-                15  // FORUM
-
+                0,
+                2,
+                5,
+                13,
+                15
             ];
 
             if (
@@ -661,10 +673,6 @@ async function transferServer(
                     sourceChannel.type
                 )
             ) {
-
-                console.log(
-                    `⚠️ Skipping unsupported channel: ${sourceChannel.name}`
-                );
 
                 continue;
             }
@@ -682,10 +690,7 @@ async function transferServer(
 
             };
 
-            // =========================================
-            // CATEGORY
-            // =========================================
-
+            // Parent
             if (
                 sourceChannel.parent_id
             ) {
@@ -702,10 +707,7 @@ async function transferServer(
                 }
             }
 
-            // =========================================
-            // TEXT
-            // =========================================
-
+            // Text
             if (
                 sourceChannel.type === 0
             ) {
@@ -727,10 +729,7 @@ async function transferServer(
                     0;
             }
 
-            // =========================================
-            // ANNOUNCEMENT
-            // =========================================
-
+            // Announcement
             if (
                 sourceChannel.type === 5
             ) {
@@ -748,10 +747,7 @@ async function transferServer(
                     false;
             }
 
-            // =========================================
-            // VOICE
-            // =========================================
-
+            // Voice
             if (
                 sourceChannel.type === 2
             ) {
@@ -773,35 +769,20 @@ async function transferServer(
                 }
             }
 
-            // =========================================
-            // CREATE CHANNEL
-            // =========================================
-
             const targetChannel =
                 await targetGuild.channels.create(
                     options
                 );
 
-            // =========================================
-            // PERMISSIONS
-            // =========================================
-
             const overwrites =
                 convertOverwrites(
-
                     sourceChannel.permission_overwrites,
-
                     roleMap,
-
                     sourceGuild.id,
-
                     targetGuild.id
-
                 );
 
-            if (
-                overwrites.length > 0
-            ) {
+            if (overwrites.length > 0) {
 
                 await targetChannel
                     .permissionOverwrites
@@ -813,16 +794,13 @@ async function transferServer(
 
             stats.channels++;
 
-            console.log(
-                `✅ Channel created: ${sourceChannel.name}`
-            );
-
         } catch (error) {
 
             stats.channelsFailed++;
 
             console.log(
-                `❌ Channel failed: ${sourceChannel.name} - ${error.message}`
+                `❌ Channel failed: ${sourceChannel.name}`,
+                error.message
             );
         }
     }
@@ -851,10 +829,6 @@ client.on(
             return;
         }
 
-        // =================================================
-        // ADMIN CHECK
-        // =================================================
-
         if (
             !interaction.member.permissions.has(
                 PermissionFlagsBits.Administrator
@@ -879,10 +853,6 @@ client.on(
         const targetGuild =
             interaction.guild;
 
-        // =================================================
-        // SAME SERVER
-        // =================================================
-
         if (
             sourceId ===
             targetGuild.id
@@ -902,10 +872,6 @@ client.on(
             ephemeral: true
         });
 
-        // =================================================
-        // SOURCE
-        // =================================================
-
         const sourceGuild =
             await getSourceGuild(
                 sourceId
@@ -916,17 +882,11 @@ client.on(
             return interaction.editReply({
 
                 content:
-
                     "❌ לא מצאתי את שרת המקור.\n\n" +
-
                     "ודא שהבוט נמצא בשרת המקור עם Administrator."
 
             });
         }
-
-        // =================================================
-        // SOURCE DATA
-        // =================================================
 
         const sourceRoles =
             await getSourceRoles(
@@ -946,21 +906,10 @@ client.on(
             return interaction.editReply({
 
                 content:
-
-                    "❌ לא נמצאו תפקידים או ערוצים בשרת המקור.\n\n" +
-
-                    `שרת: **${sourceGuild.name}**\n` +
-
-                    `ID: \`${sourceId}\`\n\n` +
-
-                    "ודא שהבוט נמצא בשרת המקור עם Administrator."
+                    "❌ לא נמצאו תפקידים או ערוצים בשרת המקור."
 
             });
         }
-
-        // =================================================
-        // COUNT
-        // =================================================
 
         const roleCount =
             sourceRoles.filter(
@@ -981,58 +930,38 @@ client.on(
                     channel.type !== 4
             ).length;
 
-        // =================================================
-        // SAVE
-        // =================================================
-
         pendingTransfers.set(
             interaction.user.id,
             {
-
                 sourceId,
-
                 targetId:
                     targetGuild.id,
-
                 sourceGuild,
-
                 sourceRoles,
-
                 sourceChannels
-
             }
         );
 
-        // =================================================
-        // BUTTONS
-        // =================================================
-
         const startButton =
             new ButtonBuilder()
-
                 .setCustomId(
                     `transfer_start_${interaction.user.id}`
                 )
-
                 .setLabel(
                     "התחל העברה"
                 )
-
                 .setStyle(
                     ButtonStyle.Success
                 );
 
         const cancelButton =
             new ButtonBuilder()
-
                 .setCustomId(
                     `transfer_cancel_${interaction.user.id}`
                 )
-
                 .setLabel(
                     "ביטול"
                 )
-
                 .setStyle(
                     ButtonStyle.Danger
                 );
@@ -1044,10 +973,6 @@ client.on(
                     cancelButton
                 );
 
-        // =================================================
-        // RESPONSE
-        // =================================================
-
         await interaction.editReply({
 
             content:
@@ -1058,17 +983,15 @@ client.on(
 
                 `📤 **יעד:** ${targetGuild.name}\n\n` +
 
-                `🏷️ שם השרת: **כן**\n` +
+                `🏷️ שם: **כן**\n` +
 
-                `🖼️ אייקון: **${sourceGuild.icon ? "כן" : "אין לשרת המקור אייקון"}**\n\n` +
+                `🖼️ אייקון: **${sourceGuild.icon ? "כן" : "אין"}**\n` +
 
                 `🎭 תפקידים: **${roleCount}**\n` +
 
                 `📁 קטגוריות: **${categoryCount}**\n` +
 
                 `💬 ערוצים: **${channelCount}**\n\n` +
-
-                `⚠️ הודעות ישנות וחברי השרת לא מועתקים.\n\n` +
 
                 `לחץ על **התחל העברה**.`,
 
@@ -1081,7 +1004,7 @@ client.on(
 );
 
 // =====================================================
-// BUTTON HANDLER
+// TRANSFER BUTTONS
 // =====================================================
 
 client.on(
@@ -1111,10 +1034,6 @@ client.on(
         const userId =
             parts[2];
 
-        // =================================================
-        // USER CHECK
-        // =================================================
-
         if (
             interaction.user.id !==
             userId
@@ -1123,33 +1042,29 @@ client.on(
             return interaction.reply({
 
                 content:
-                    "❌ רק מי שהפעיל את ההעברה יכול להשתמש בכפתורים.",
+                    "❌ רק מי שהפעיל את ההעברה יכול להשתמש בכפתור.",
 
                 ephemeral: true
 
             });
         }
 
-        const data =
+        const transfer =
             pendingTransfers.get(
                 userId
             );
 
-        if (!data) {
+        if (!transfer) {
 
-            return interaction.update({
+            return interaction.reply({
 
                 content:
-                    "❌ פג תוקף ההעברה. הפעל `/transfer` מחדש.",
+                    "❌ ההעברה פגה. הפעל /transfer מחדש.",
 
-                components: []
+                ephemeral: true
 
             });
         }
-
-        // =================================================
-        // CANCEL
-        // =================================================
 
         if (
             action === "cancel"
@@ -1162,444 +1077,98 @@ client.on(
             return interaction.update({
 
                 content:
-                    "❌ **ההעברה בוטלה.**",
+                    "❌ ההעברה בוטלה.",
 
                 components: []
 
             });
         }
 
-        // =================================================
-        // START
-        // =================================================
-
         if (
-            action === "start"
-        ) {
-
-            await interaction.update({
-
-                content:
-
-                    "⏳ **מתחיל להעתיק את השרת...**\n\n" +
-
-                    "🏷️ שם\n" +
-
-                    "🖼️ אייקון\n" +
-
-                    "🎭 תפקידים\n" +
-
-                    "📁 קטגוריות\n" +
-
-                    "💬 ערוצים\n" +
-
-                    "🔐 הרשאות\n\n" +
-
-                    "זה יכול לקחת קצת זמן...",
-
-                components: []
-
-            });
-
-            try {
-
-                const targetGuild =
-                    await client.guilds.fetch(
-                        data.targetId
-                    );
-
-                await targetGuild.roles.fetch();
-
-                await targetGuild.channels.fetch();
-
-                // =========================================
-                // TRANSFER
-                // =========================================
-
-                const stats =
-                    await transferServer(
-
-                        data.sourceGuild,
-
-                        targetGuild,
-
-                        data.sourceRoles,
-
-                        data.sourceChannels
-
-                    );
-
-                pendingTransfers.delete(
-                    userId
-                );
-
-                // =========================================
-                // LEAVE BUTTON
-                // =========================================
-
-                const leaveButton =
-                    new ButtonBuilder()
-
-                        .setCustomId(
-                            `transfer_leave_${userId}`
-                        )
-
-                        .setLabel(
-                            "🚪 עזוב את השרת הישן"
-                        )
-
-                        .setStyle(
-                            ButtonStyle.Danger
-                        );
-
-                const keepButton =
-                    new ButtonBuilder()
-
-                        .setCustomId(
-                            `transfer_keep_${userId}`
-                        )
-
-                        .setLabel(
-                            "השאר את הבוט בישן"
-                        )
-
-                        .setStyle(
-                            ButtonStyle.Secondary
-                        );
-
-                const row =
-                    new ActionRowBuilder()
-                        .addComponents(
-                            leaveButton,
-                            keepButton
-                        );
-
-                // =========================================
-                // RESULT
-                // =========================================
-
-                await interaction.followUp({
-
-                    content:
-
-                        `# ✅ ההעברה הסתיימה!\n\n` +
-
-                        `📥 **מקור:** ${data.sourceGuild.name}\n` +
-
-                        `📤 **יעד:** ${targetGuild.name}\n\n` +
-
-                        `🏷️ שם השרת: **${stats.name ? "✅" : "❌"}**\n` +
-
-                        `🖼️ אייקון: **${stats.icon ? "✅" : "❌"}**\n\n` +
-
-                        `🎭 תפקידים: **${stats.roles}** נוצרו\n` +
-
-                        `📁 קטגוריות: **${stats.categories}** נוצרו\n` +
-
-                        `💬 ערוצים: **${stats.channels}** נוצרו\n\n` +
-
-                        `⚠️ הודעות ישנות וחברי השרת לא הועתקו.\n\n` +
-
-                        `**מה לעשות עם הבוט בשרת הישן?**`,
-
-                    components: [
-                        row
-                    ],
-
-                    ephemeral: true
-
-                });
-
-            } catch (error) {
-
-                console.error(
-                    "❌ TRANSFER ERROR:",
-                    error
-                );
-
-                pendingTransfers.delete(
-                    userId
-                );
-
-                await interaction.followUp({
-
-                    content:
-
-                        `❌ **ההעברה נכשלה**\n\n` +
-
-                        `שגיאה:\n` +
-
-                        `\`${error.message}\`\n\n` +
-
-                        `ודא שלבוט יש Administrator בשני השרתים.`,
-
-                    ephemeral: true
-
-                });
-            }
-        }
-    }
-);
-
-// =====================================================
-// LEAVE / KEEP OLD SERVER
-// =====================================================
-
-client.on(
-    Events.InteractionCreate,
-    async interaction => {
-
-        if (
-            !interaction.isButton()
+            action !== "start"
         ) {
             return;
         }
 
-        // =================================================
-        // LEAVE
-        // =================================================
+        await interaction.update({
 
-        if (
-            interaction.customId.startsWith(
-                "transfer_leave_"
-            )
-        ) {
+            content:
+                "⏳ **מעביר את השרת...**\n\n" +
+                "🏷️ שם\n" +
+                "🖼️ אייקון\n" +
+                "🎭 תפקידים\n" +
+                "📁 קטגוריות\n" +
+                "💬 ערוצים\n" +
+                "🔐 הרשאות",
 
-            const userId =
-                interaction.customId
-                    .split("_")
-                    .pop();
+            components: []
 
-            if (
-                interaction.user.id !==
+        });
+
+        try {
+
+            const targetGuild =
+                await client.guilds.fetch(
+                    transfer.targetId
+                );
+
+            await targetGuild.roles.fetch();
+            await targetGuild.channels.fetch();
+
+            const stats =
+                await transferServer(
+                    transfer.sourceGuild,
+                    targetGuild,
+                    transfer.sourceRoles,
+                    transfer.sourceChannels
+                );
+
+            pendingTransfers.delete(
                 userId
-            ) {
+            );
 
-                return interaction.reply({
-
-                    content:
-                        "❌ רק מי שהפעיל את ההעברה יכול לעשות את זה.",
-
-                    ephemeral: true
-
-                });
-            }
-
-            // =============================================
-            // CONFIRMATION
-            // =============================================
-
-            const confirm =
-                new ButtonBuilder()
-
-                    .setCustomId(
-                        `transfer_confirmleave_${userId}`
-                    )
-
-                    .setLabel(
-                        "כן, עזוב את השרת הישן"
-                    )
-
-                    .setStyle(
-                        ButtonStyle.Danger
-                    );
-
-            const cancel =
-                new ButtonBuilder()
-
-                    .setCustomId(
-                        `transfer_cancelleave_${userId}`
-                    )
-
-                    .setLabel(
-                        "ביטול"
-                    )
-
-                    .setStyle(
-                        ButtonStyle.Secondary
-                    );
-
-            const row =
-                new ActionRowBuilder()
-                    .addComponents(
-                        confirm,
-                        cancel
-                    );
-
-            return interaction.update({
+            await interaction.followUp({
 
                 content:
 
-                    `⚠️ **אתה בטוח?**\n\n` +
+                    `# ✅ ההעברה הסתיימה!\n\n` +
 
-                    `הבוט יעזוב את שרת המקור.\n\n` +
+                    `🏷️ שם: **${stats.name ? "✅" : "❌"}**\n` +
 
-                    `⚠️ זה **לא מוחק את השרת**.\n` +
+                    `🖼️ אייקון: **${stats.icon ? "✅" : "❌"}**\n\n` +
 
-                    `אם אתה הבעלים, תוכל למחוק את השרת ידנית דרך Discord.`,
+                    `🎭 תפקידים: **${stats.roles}**\n` +
 
-                components: [
-                    row
-                ]
+                    `📁 קטגוריות: **${stats.categories}**\n` +
+
+                    `💬 ערוצים: **${stats.channels}**\n\n` +
+
+                    `❌ כשלונות: **${stats.rolesFailed + stats.categoriesFailed + stats.channelsFailed}**\n\n` +
+
+                    `⚠️ הבוט לא עזב ולא מחק את שרת המקור.`,
+
+                ephemeral: true
 
             });
-        }
 
-        // =================================================
-        // CANCEL LEAVE
-        // =================================================
+        } catch (error) {
 
-        if (
-            interaction.customId.startsWith(
-                "transfer_cancelleave_"
-            )
-        ) {
+            console.error(
+                "❌ TRANSFER ERROR:",
+                error
+            );
 
-            return interaction.update({
-
-                content:
-
-                    "✅ הבוט נשאר בשרת הישן.",
-
-                components: []
-
-            });
-        }
-
-        // =================================================
-        // CONFIRM LEAVE
-        // =================================================
-
-        if (
-            interaction.customId.startsWith(
-                "transfer_confirmleave_"
-            )
-        ) {
-
-            const userId =
-                interaction.customId
-                    .split("_")
-                    .pop();
-
-            if (
-                interaction.user.id !==
+            pendingTransfers.delete(
                 userId
-            ) {
+            );
 
-                return interaction.reply({
-
-                    content:
-                        "❌ אין לך הרשאה לעשות את זה.",
-
-                    ephemeral: true
-
-                });
-            }
-
-            // =============================================
-            // FIND SOURCE FROM SAVED DATA
-            // =============================================
-
-            // The transfer is already finished,
-            // so we need to use the guild ID
-            // saved temporarily below.
-
-            const sourceId =
-                lastCompletedTransfers.get(
-                    userId
-                );
-
-            if (!sourceId) {
-
-                return interaction.update({
-
-                    content:
-
-                        "❌ לא מצאתי את שרת המקור. ההעברה כנראה הסתיימה לפני זמן רב.",
-
-                    components: []
-
-                });
-            }
-
-            try {
-
-                const sourceGuild =
-                    client.guilds.cache.get(
-                        sourceId
-                    );
-
-                if (!sourceGuild) {
-
-                    return interaction.update({
-
-                        content:
-
-                            "ℹ️ הבוט כבר לא נמצא בשרת הישן.",
-
-                        components: []
-
-                    });
-                }
-
-                await sourceGuild.leave();
-
-                lastCompletedTransfers.delete(
-                    userId
-                );
-
-                await interaction.update({
-
-                    content:
-
-                        `🚪 **הבוט עזב את שרת המקור בהצלחה.**\n\n` +
-
-                        `✅ השרת החדש נשאר פעיל.\n` +
-
-                        `⚠️ השרת הישן עצמו לא נמחק.`,
-
-                    components: []
-
-                });
-
-            } catch (error) {
-
-                console.error(
-                    "❌ Leave error:",
-                    error
-                );
-
-                await interaction.update({
-
-                    content:
-
-                        `❌ לא הצלחתי לעזוב את השרת.\n\n` +
-
-                        `\`${error.message}\``,
-
-                    components: []
-
-                });
-            }
-        }
-
-        // =================================================
-        // KEEP
-        // =================================================
-
-        if (
-            interaction.customId.startsWith(
-                "transfer_keep_"
-            )
-        ) {
-
-            return interaction.update({
+            await interaction.followUp({
 
                 content:
+                    `❌ ההעברה נכשלה.\n\n` +
+                    `\`${error.message}\``,
 
-                    "✅ **הבוט נשאר בשרת הישן.**",
-
-                components: []
+                ephemeral: true
 
             });
         }
@@ -1607,19 +1176,133 @@ client.on(
 );
 
 // =====================================================
-// LAST COMPLETED TRANSFERS
+// BUILD TEST - !בדיקה
 // =====================================================
 
-const lastCompletedTransfers =
-    new Map();
+client.on(
+    Events.MessageCreate,
+    async message => {
+
+        if (message.author.bot) {
+            return;
+        }
+
+        if (
+            message.content.trim() !==
+            "!בדיקה"
+        ) {
+            return;
+        }
+
+        if (!message.guild) {
+            return;
+        }
+
+        if (
+            !message.member.permissions.has(
+                PermissionFlagsBits.Administrator
+            )
+        ) {
+
+            return message.reply(
+                "❌ אתה חייב Administrator כדי להפעיל מצב בנייה."
+            );
+        }
+
+        const guild =
+            message.guild;
+
+        const existing =
+            data.buildTests[guild.id];
+
+        if (
+            existing &&
+            existing.categoryId
+        ) {
+
+            const category =
+                guild.channels.cache.get(
+                    existing.categoryId
+                );
+
+            if (category) {
+
+                return message.reply(
+                    "⚠️ כבר קיימת סביבת TEST בשרת.\nהשתמש ב־`!נקהבדיקה` לפני יצירה מחדש."
+                );
+            }
+        }
+
+        const confirmButton =
+            new ButtonBuilder()
+                .setCustomId(
+                    `build_confirm_${message.author.id}_${guild.id}`
+                )
+                .setLabel(
+                    "🧪 צור סביבת בנייה"
+                )
+                .setStyle(
+                    ButtonStyle.Success
+                );
+
+        const cancelButton =
+            new ButtonBuilder()
+                .setCustomId(
+                    `build_cancel_${message.author.id}_${guild.id}`
+                )
+                .setLabel(
+                    "ביטול"
+                )
+                .setStyle(
+                    ButtonStyle.Danger
+                );
+
+        const row =
+            new ActionRowBuilder()
+                .addComponents(
+                    confirmButton,
+                    cancelButton
+                );
+
+        pendingBuildTests.set(
+            message.author.id,
+            {
+                guildId:
+                    guild.id,
+                createdAt:
+                    Date.now()
+            }
+        );
+
+        await message.reply({
+
+            content:
+
+                `# 🧪 מצב בנייה\n\n` +
+
+                `הפקודה תיצור:\n\n` +
+
+                `📁 **10 קטגוריות**\n` +
+
+                `💬 **100 חדרים**\n` +
+
+                `🧪 שמות TEST מסודרים\n\n` +
+
+                `⚠️ המערכת **לא מוחקת ערוצים קיימים** ולא מתייגת חברים.\n\n` +
+
+                `לחץ על הכפתור כדי להתחיל.`,
+
+            components: [
+                row
+            ]
+
+        });
+    }
+);
 
 // =====================================================
-// SAVE SOURCE AFTER TRANSFER
+// BUILD BUTTONS
 // =====================================================
-
-// We listen to the interaction again to detect
-// successful transfer messages and save the source.
-// This does not interfere with the main handler.
 
 client.on(
     Events.InteractionCreate,
@@ -1633,29 +1316,638 @@ client.on(
 
         if (
             !interaction.customId.startsWith(
-                "transfer_start_"
+                "build_"
             )
         ) {
             return;
         }
 
-        const userId =
-            interaction.customId
-                .split("_")
-                .pop();
+        const parts =
+            interaction.customId.split("_");
 
-        const data =
-            pendingTransfers.get(
+        const action =
+            parts[1];
+
+        const userId =
+            parts[2];
+
+        const guildId =
+            parts[3];
+
+        if (
+            interaction.user.id !==
+            userId
+        ) {
+
+            return interaction.reply({
+
+                content:
+                    "❌ רק מי שהפעיל את הבדיקה יכול להשתמש בכפתור.",
+
+                ephemeral: true
+
+            });
+        }
+
+        const guild =
+            client.guilds.cache.get(
+                guildId
+            );
+
+        if (!guild) {
+
+            return interaction.reply({
+
+                content:
+                    "❌ השרת לא נמצא.",
+
+                ephemeral: true
+
+            });
+        }
+
+        // =================================================
+        // CANCEL
+        // =================================================
+
+        if (
+            action === "cancel"
+        ) {
+
+            pendingBuildTests.delete(
                 userId
             );
 
-        if (data) {
+            return interaction.update({
 
-            lastCompletedTransfers.set(
-                userId,
-                data.sourceId
+                content:
+                    "❌ מצב הבנייה בוטל.",
+
+                components: []
+
+            });
+        }
+
+        // =================================================
+        // CONFIRM
+        // =================================================
+
+        if (
+            action !== "confirm"
+        ) {
+            return;
+        }
+
+        pendingBuildTests.delete(
+            userId
+        );
+
+        await interaction.update({
+
+            content:
+                "⏳ **יוצר סביבת בנייה...**\n\n" +
+                "📁 יוצר קטגוריות\n" +
+                "💬 יוצר 100 חדרים\n\n" +
+                "זה יכול לקחת קצת זמן...",
+
+            components: []
+
+        });
+
+        try {
+
+            // =============================================
+            // MAIN CATEGORY
+            // =============================================
+
+            const mainCategory =
+                await guild.channels.create({
+
+                    name:
+                        "🧪・nuke TEST",
+
+                    type:
+                        ChannelType.GuildCategory,
+
+                    reason:
+                        "Build Test System"
+
+                });
+
+            const createdCategories = [
+                mainCategory.id
+            ];
+
+            const createdChannels = [];
+
+            // =============================================
+            // 10 CATEGORIES
+            // =============================================
+
+            for (
+                let categoryNumber = 1;
+                categoryNumber <= 10;
+                categoryNumber++
+            ) {
+
+                const category =
+                    await guild.channels.create({
+
+                        name:
+                            `🧪・nuke ${String(categoryNumber).padStart(2, "0")}`,
+
+                        type:
+                            ChannelType.GuildCategory,
+
+                        parent:
+                            mainCategory.id,
+
+                        reason:
+                            "Build Test System"
+
+                    });
+
+                createdCategories.push(
+                    category.id
+                );
+
+                // =========================================
+                // 10 CHANNELS PER CATEGORY
+                // =========================================
+
+                for (
+                    let channelNumber = 1;
+                    channelNumber <= 10;
+                    channelNumber++
+                ) {
+
+                    const channel =
+                        await guild.channels.create({
+
+                            name:
+                                `test-${String(categoryNumber).padStart(2, "0")}-${String(channelNumber).padStart(2, "0")}`,
+
+                            type:
+                                ChannelType.GuildText,
+
+                            parent:
+                                category.id,
+
+                            topic:
+                                "🧪 nuke Test Channel",
+
+                            reason:
+                                "Build Test System"
+
+                        });
+
+                    createdChannels.push(
+                        channel.id
+                    );
+
+                    // =====================================
+                    // TEST MESSAGE
+                    // =====================================
+
+                    await channel.send({
+
+                        content:
+
+                            `🧪 **nuke TEST**\n\n` +
+
+                            `קטגוריה: **${categoryNumber}/10**\n` +
+
+                            `חדר: **${channelNumber}/10**\n\n` +
+
+                            `החדר נוצר בהצלחה על ידי מערכת הבנייה.`
+
+                    });
+
+                    // =====================================
+                    // SMALL DELAY
+                    // =====================================
+
+                    await new Promise(
+                        resolve =>
+                            setTimeout(
+                                resolve,
+                                150
+                            )
+                    );
+                }
+            }
+
+            // =============================================
+            // SAVE
+            // =============================================
+
+            data.buildTests[guild.id] = {
+
+                mainCategoryId:
+                    mainCategory.id,
+
+                categoryIds:
+                    createdCategories,
+
+                channelIds:
+                    createdChannels,
+
+                createdBy:
+                    interaction.user.id,
+
+                createdAt:
+                    Date.now()
+
+            };
+
+            saveData();
+
+            // =============================================
+            // RESULT
+            // =============================================
+
+            await interaction.followUp({
+
+                content:
+
+                    `# ✅ סביבת הבנייה מוכנה!\n\n` +
+
+                    `📁 קטגוריות: **10**\n` +
+
+                    `💬 חדרים: **100**\n\n` +
+
+                    `🧪 כל החדרים נמצאים תחת:\n` +
+
+                    `**🧪・nuke TEST**\n\n` +
+
+                    `כשתרצה לנקות אותם השתמש ב־\`!נקהבדיקה\`.`,
+
+                ephemeral: true
+
+            });
+
+        } catch (error) {
+
+            console.error(
+                "❌ BUILD TEST ERROR:",
+                error
+            );
+
+            await interaction.followUp({
+
+                content:
+
+                    `❌ **הבנייה נעצרה.**\n\n` +
+
+                    `שגיאה:\n` +
+
+                    `\`${error.message}\`\n\n` +
+
+                    `ייתכן שהגעת ל־Rate Limit של Discord.`,
+
+                ephemeral: true
+
+            });
+        }
+    }
+);
+
+// =====================================================
+// !נקהבדיקה
+// =====================================================
+
+client.on(
+    Events.MessageCreate,
+    async message => {
+
+        if (message.author.bot) {
+            return;
+        }
+
+        if (
+            message.content.trim() !==
+            "!נקהבדיקה"
+        ) {
+            return;
+        }
+
+        if (!message.guild) {
+            return;
+        }
+
+        if (
+            !message.member.permissions.has(
+                PermissionFlagsBits.Administrator
+            )
+        ) {
+
+            return message.reply(
+                "❌ אתה חייב Administrator."
             );
         }
+
+        const guild =
+            message.guild;
+
+        const test =
+            data.buildTests[guild.id];
+
+        if (!test) {
+
+            return message.reply(
+                "ℹ️ לא מצאתי סביבת BUILD TEST שנוצרה על ידי הבוט."
+            );
+        }
+
+        const confirmButton =
+            new ButtonBuilder()
+                .setCustomId(
+                    `cleanup_confirm_${message.author.id}_${guild.id}`
+                )
+                .setLabel(
+                    "🗑️ נקה TEST"
+                )
+                .setStyle(
+                    ButtonStyle.Danger
+                );
+
+        const cancelButton =
+            new ButtonBuilder()
+                .setCustomId(
+                    `cleanup_cancel_${message.author.id}_${guild.id}`
+                )
+                .setLabel(
+                    "ביטול"
+                )
+                .setStyle(
+                    ButtonStyle.Secondary
+                );
+
+        const row =
+            new ActionRowBuilder()
+                .addComponents(
+                    confirmButton,
+                    cancelButton
+                );
+
+        await message.reply({
+
+            content:
+
+                `# 🧹 ניוק BUILD TEST\n\n` +
+
+                `יימחקו רק:\n` +
+
+                `📁 **קטגוריות הבדיקה**\n` +
+
+                `💬 **100 חדרי הבדיקה**\n\n` +
+
+                `❗ שום ערוץ רגיל בשרת לא יימחק.`,
+
+            components: [
+                row
+            ]
+
+        });
+    }
+);
+
+// =====================================================
+// CLEANUP BUTTONS
+// =====================================================
+
+client.on(
+    Events.InteractionCreate,
+    async interaction => {
+
+        if (
+            !interaction.isButton()
+        ) {
+            return;
+        }
+
+        if (
+            !interaction.customId.startsWith(
+                "cleanup_"
+            )
+        ) {
+            return;
+        }
+
+        const parts =
+            interaction.customId.split("_");
+
+        const action =
+            parts[1];
+
+        const userId =
+            parts[2];
+
+        const guildId =
+            parts[3];
+
+        if (
+            interaction.user.id !==
+            userId
+        ) {
+
+            return interaction.reply({
+
+                content:
+                    "❌ רק מי שהפעיל את הניקוי יכול להשתמש בכפתור.",
+
+                ephemeral: true
+
+            });
+        }
+
+        if (
+            action === "cancel"
+        ) {
+
+            return interaction.update({
+
+                content:
+                    "✅ הניקוי בוטל.",
+
+                components: []
+
+            });
+        }
+
+        if (
+            action !== "confirm"
+        ) {
+            return;
+        }
+
+        const guild =
+            client.guilds.cache.get(
+                guildId
+            );
+
+        if (!guild) {
+
+            return interaction.update({
+
+                content:
+                    "❌ השרת לא נמצא.",
+
+                components: []
+
+            });
+        }
+
+        const test =
+            data.buildTests[guild.id];
+
+        if (!test) {
+
+            return interaction.update({
+
+                content:
+                    "ℹ️ סביבת הבדיקה כבר לא קיימת.",
+
+                components: []
+
+            });
+        }
+
+        await interaction.update({
+
+            content:
+                "⏳ **מנקה את סביבת הבדיקה...**",
+
+            components: []
+
+        });
+
+        let deletedChannels = 0;
+        let deletedCategories = 0;
+
+        // =================================================
+        // DELETE CHANNELS
+        // =================================================
+
+        for (
+            const channelId
+            of test.channelIds || []
+        ) {
+
+            try {
+
+                const channel =
+                    guild.channels.cache.get(
+                        channelId
+                    );
+
+                if (channel) {
+
+                    await channel.delete(
+                        "Build Test Cleanup"
+                    );
+
+                    deletedChannels++;
+                }
+
+            } catch (error) {
+
+                console.log(
+                    `❌ Could not delete channel ${channelId}:`,
+                    error.message
+                );
+            }
+        }
+
+        // =================================================
+        // DELETE CATEGORIES
+        // =================================================
+
+        for (
+            const categoryId
+            of test.categoryIds || []
+        ) {
+
+            try {
+
+                const category =
+                    guild.channels.cache.get(
+                        categoryId
+                    );
+
+                if (category) {
+
+                    await category.delete(
+                        "Build Test Cleanup"
+                    );
+
+                    deletedCategories++;
+                }
+
+            } catch (error) {
+
+                console.log(
+                    `❌ Could not delete category ${categoryId}:`,
+                    error.message
+                );
+            }
+        }
+
+        // =================================================
+        // DELETE MAIN CATEGORY
+        // =================================================
+
+        try {
+
+            const mainCategory =
+                guild.channels.cache.get(
+                    test.mainCategoryId
+                );
+
+            if (mainCategory) {
+
+                await mainCategory.delete(
+                    "Build Test Cleanup"
+                );
+
+                deletedCategories++;
+            }
+
+        } catch (error) {
+
+            console.log(
+                "❌ Could not delete main category:",
+                error.message
+            );
+        }
+
+        // =================================================
+        // REMOVE DATA
+        // =================================================
+
+        delete data.buildTests[guild.id];
+
+        saveData();
+
+        // =================================================
+        // RESULT
+        // =================================================
+
+        await interaction.followUp({
+
+            content:
+
+                `# 🧹 הניקוי הסתיים!\n\n` +
+
+                `💬 חדרים שנמחקו: **${deletedChannels}**\n` +
+
+                `📁 קטגוריות שנמחקו: **${deletedCategories}**\n\n` +
+
+                `✅ ערוצים רגילים בשרת לא נגעו.`,
+
+            ephemeral: true
+
+        });
     }
 );
 
