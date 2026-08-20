@@ -1,7 +1,6 @@
 const {
     Client,
     GatewayIntentBits,
-    Partials,
     REST,
     Routes,
     SlashCommandBuilder,
@@ -15,50 +14,47 @@ const {
 
 const express = require("express");
 
-// ==============================
+// ==========================================
 // CONFIG
-// ==============================
+// ==========================================
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
 if (!TOKEN) {
-    console.error("❌ DISCORD_TOKEN לא מוגדר ב-Environment Variables");
+    console.error("❌ DISCORD_TOKEN לא מוגדר");
     process.exit(1);
 }
 
 if (!CLIENT_ID) {
-    console.error("❌ CLIENT_ID לא מוגדר ב-Environment Variables");
+    console.error("❌ CLIENT_ID לא מוגדר");
     process.exit(1);
 }
 
-// ==============================
-// DISCORD CLIENT
-// ==============================
+// ==========================================
+// CLIENT
+// ==========================================
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds
-    ],
-    partials: [
-        Partials.Channel
     ]
 });
 
-// ==============================
-// WEB SERVER - RENDER
-// ==============================
+// ==========================================
+// RENDER WEB SERVER
+// ==========================================
 
 const app = express();
 
 app.get("/", (req, res) => {
-    res.send("Bot is online!");
+    res.send("Discord Transfer Bot is online!");
 });
 
 app.get("/health", (req, res) => {
     res.json({
         online: true,
-        bot: client.user ? client.user.tag : null
+        bot: client.user?.tag || null
     });
 });
 
@@ -68,9 +64,15 @@ app.listen(PORT, () => {
     console.log(`🌐 Web server running on port ${PORT}`);
 });
 
-// ==============================
+// ==========================================
+// PENDING TRANSFERS
+// ==========================================
+
+const pendingTransfers = new Map();
+
+// ==========================================
 // SLASH COMMAND
-// ==============================
+// ==========================================
 
 const commands = [
     new SlashCommandBuilder()
@@ -88,9 +90,9 @@ const commands = [
         .toJSON()
 ];
 
-// ==============================
+// ==========================================
 // REGISTER COMMAND
-// ==============================
+// ==========================================
 
 async function registerCommands() {
     try {
@@ -103,253 +105,85 @@ async function registerCommands() {
             }
         );
 
-        console.log("✅ Slash commands registered");
+        console.log("✅ /transfer registered");
     } catch (error) {
-        console.error("❌ Failed to register commands:", error);
+        console.error("❌ Command registration error:", error);
     }
 }
 
-// ==============================
+// ==========================================
 // READY
-// ==============================
+// ==========================================
 
 client.once(Events.ClientReady, async readyClient => {
-    console.log(`✅ Logged in as ${readyClient.user.tag}`);
+
+    console.log("====================================");
+    console.log(`🤖 Logged in as ${readyClient.user.tag}`);
     console.log(`📡 Servers: ${readyClient.guilds.cache.size}`);
+    console.log("====================================");
+
+    for (const guild of readyClient.guilds.cache.values()) {
+        console.log(`📌 ${guild.name} | ${guild.id}`);
+    }
 
     await registerCommands();
 });
 
-// ==============================
-// TRANSFER SYSTEM
-// ==============================
+// ==========================================
+// GET FULL GUILD DATA
+// ==========================================
 
-async function transferServer(sourceGuild, targetGuild) {
+async function loadGuild(guildId) {
 
-    const result = {
-        roles: 0,
-        categories: 0,
-        channels: 0
+    console.log(`🔎 Loading guild: ${guildId}`);
+
+    let guild;
+
+    try {
+        guild = await client.guilds.fetch(guildId);
+    } catch (error) {
+        console.error("❌ Could not fetch guild:", error.message);
+        return null;
+    }
+
+    if (!guild) {
+        return null;
+    }
+
+    console.log(`✅ Found guild: ${guild.name}`);
+
+    // Force fetch roles
+    let roles;
+
+    try {
+        roles = await guild.roles.fetch();
+        console.log(`🎭 Roles found: ${roles.size}`);
+    } catch (error) {
+        console.error("❌ Roles fetch failed:", error.message);
+        roles = new Map();
+    }
+
+    // Force fetch channels
+    let channels;
+
+    try {
+        channels = await guild.channels.fetch();
+        console.log(`📁 Channels found: ${channels.size}`);
+    } catch (error) {
+        console.error("❌ Channels fetch failed:", error.message);
+        channels = new Map();
+    }
+
+    return {
+        guild,
+        roles,
+        channels
     };
-
-    console.log(
-        `📦 Starting transfer: ${sourceGuild.name} -> ${targetGuild.name}`
-    );
-
-    // =====================================
-    // 1. COPY ROLES
-    // =====================================
-
-    const roleMap = new Map();
-
-    const sourceRoles = [...sourceGuild.roles.cache.values()]
-        .filter(role => role.id !== sourceGuild.id)
-        .sort((a, b) => a.position - b.position);
-
-    for (const sourceRole of sourceRoles) {
-
-        // Skip managed/integration roles
-        if (sourceRole.managed) continue;
-
-        try {
-
-            const existingRole = targetGuild.roles.cache.find(
-                role => role.name === sourceRole.name
-            );
-
-            if (existingRole) {
-                roleMap.set(sourceRole.id, existingRole.id);
-                continue;
-            }
-
-            const newRole = await targetGuild.roles.create({
-                name: sourceRole.name,
-                color: sourceRole.color,
-                hoist: sourceRole.hoist,
-                mentionable: sourceRole.mentionable,
-                permissions: sourceRole.permissions,
-                reason: "Server transfer"
-            });
-
-            roleMap.set(sourceRole.id, newRole.id);
-
-            result.roles++;
-
-        } catch (error) {
-            console.error(
-                `❌ Failed creating role ${sourceRole.name}:`,
-                error.message
-            );
-        }
-    }
-
-    // =====================================
-    // 2. COPY CATEGORIES
-    // =====================================
-
-    const categoryMap = new Map();
-
-    const sourceCategories = sourceGuild.channels.cache
-        .filter(channel =>
-            channel.type === ChannelType.GuildCategory
-        )
-        .sort((a, b) => a.position - b.position);
-
-    for (const category of sourceCategories.values()) {
-
-        try {
-
-            const newCategory = await targetGuild.channels.create({
-                name: category.name,
-                type: ChannelType.GuildCategory,
-                position: category.position
-            });
-
-            categoryMap.set(category.id, newCategory.id);
-
-            // Copy permission overwrites
-            await copyPermissionOverwrites(
-                category,
-                newCategory,
-                roleMap,
-                sourceGuild,
-                targetGuild
-            );
-
-            result.categories++;
-
-        } catch (error) {
-            console.error(
-                `❌ Failed creating category ${category.name}:`,
-                error.message
-            );
-        }
-    }
-
-    // =====================================
-    // 3. COPY CHANNELS
-    // =====================================
-
-    const sourceChannels = sourceGuild.channels.cache
-        .filter(channel =>
-            channel.type !== ChannelType.GuildCategory
-        )
-        .sort((a, b) => a.position - b.position);
-
-    for (const channel of sourceChannels.values()) {
-
-        try {
-
-            let newChannel;
-
-            const parentId =
-                channel.parentId
-                    ? categoryMap.get(channel.parentId)
-                    : null;
-
-            const options = {
-                name: channel.name,
-                type: channel.type,
-                position: channel.position,
-                reason: "Server transfer"
-            };
-
-            // Text channel
-            if (channel.type === ChannelType.GuildText) {
-
-                options.topic = channel.topic || undefined;
-                options.nsfw = channel.nsfw;
-                options.rateLimitPerUser =
-                    channel.rateLimitPerUser || 0;
-
-                if (parentId) {
-                    options.parent = parentId;
-                }
-
-            }
-
-            // Voice channel
-            else if (channel.type === ChannelType.GuildVoice) {
-
-                options.bitrate = channel.bitrate;
-                options.userLimit = channel.userLimit;
-
-                if (parentId) {
-                    options.parent = parentId;
-                }
-
-            }
-
-            // Announcement channel
-            else if (channel.type === ChannelType.GuildAnnouncement) {
-
-                options.topic = channel.topic || undefined;
-                options.nsfw = channel.nsfw;
-
-                if (parentId) {
-                    options.parent = parentId;
-                }
-
-            }
-
-            // Stage channel
-            else if (channel.type === ChannelType.GuildStageVoice) {
-
-                if (parentId) {
-                    options.parent = parentId;
-                }
-
-            }
-
-            // Forum
-            else if (channel.type === ChannelType.GuildForum) {
-
-                options.topic = channel.topic || undefined;
-                options.nsfw = channel.nsfw;
-
-                if (parentId) {
-                    options.parent = parentId;
-                }
-
-            }
-
-            // Skip unsupported channel types
-            else {
-                console.log(
-                    `⚠️ Skipping unsupported channel: ${channel.name}`
-                );
-                continue;
-            }
-
-            newChannel = await targetGuild.channels.create(options);
-
-            // Copy permission overwrites
-            await copyPermissionOverwrites(
-                channel,
-                newChannel,
-                roleMap,
-                sourceGuild,
-                targetGuild
-            );
-
-            result.channels++;
-
-        } catch (error) {
-
-            console.error(
-                `❌ Failed creating channel ${channel.name}:`,
-                error.message
-            );
-
-        }
-    }
-
-    return result;
 }
 
-// ==============================
-// COPY PERMISSIONS
-// ==============================
+// ==========================================
+// COPY PERMISSION OVERWRITES
+// ==========================================
 
 async function copyPermissionOverwrites(
     sourceChannel,
@@ -365,7 +199,7 @@ async function copyPermissionOverwrites(
 
         let targetId = null;
 
-        // Role
+        // ROLE
         if (overwrite.type === 0) {
 
             // @everyone
@@ -374,73 +208,399 @@ async function copyPermissionOverwrites(
             } else {
                 targetId = roleMap.get(overwrite.id);
             }
-
         }
 
-        // Member
-        else if (overwrite.type === 1) {
-
-            // We cannot copy permissions for users
-            // who are not necessarily members of target server.
+        // MEMBER
+        // We skip member permissions because the same
+        // users may not exist in the target server.
+        if (overwrite.type === 1) {
             continue;
         }
 
-        if (!targetId) continue;
+        if (!targetId) {
+            continue;
+        }
 
         overwrites.push({
             id: targetId,
             allow: overwrite.allow.bitfield.toString(),
             deny: overwrite.deny.bitfield.toString(),
-            type: overwrite.type
+            type: 0
         });
     }
 
-    if (overwrites.length > 0) {
+    if (overwrites.length === 0) {
+        return;
+    }
+
+    try {
+
+        await targetChannel.permissionOverwrites.set(
+            overwrites,
+            "Server transfer"
+        );
+
+        console.log(
+            `🔐 Permissions copied: ${sourceChannel.name}`
+        );
+
+    } catch (error) {
+
+        console.error(
+            `⚠️ Permission error ${sourceChannel.name}:`,
+            error.message
+        );
+    }
+}
+
+// ==========================================
+// TRANSFER SERVER
+// ==========================================
+
+async function transferServer(sourceData, targetData) {
+
+    const sourceGuild = sourceData.guild;
+    const targetGuild = targetData.guild;
+
+    const sourceRoles = sourceData.roles;
+    const sourceChannels = sourceData.channels;
+
+    const result = {
+        roles: 0,
+        categories: 0,
+        channels: 0
+    };
+
+    console.log("");
+    console.log("====================================");
+    console.log("🚀 STARTING TRANSFER");
+    console.log(`📥 SOURCE: ${sourceGuild.name}`);
+    console.log(`📤 TARGET: ${targetGuild.name}`);
+    console.log("====================================");
+
+    // ==========================================
+    // ROLE MAP
+    // ==========================================
+
+    const roleMap = new Map();
+
+    // Discord's @everyone role
+    roleMap.set(
+        sourceGuild.id,
+        targetGuild.id
+    );
+
+    // Get normal roles
+    const normalRoles = [...sourceRoles.values()]
+        .filter(role => !role.managed)
+        .filter(role => role.id !== sourceGuild.id)
+        .sort((a, b) => a.position - b.position);
+
+    console.log(`🎭 Copying ${normalRoles.length} roles...`);
+
+    for (const sourceRole of normalRoles) {
 
         try {
 
-            await targetChannel.permissionOverwrites.set(
-                overwrites,
-                "Server transfer"
+            // Look for an existing role with same name
+            let targetRole = targetGuild.roles.cache.find(
+                role =>
+                    role.name === sourceRole.name &&
+                    !role.managed
+            );
+
+            if (!targetRole) {
+
+                targetRole = await targetGuild.roles.create({
+                    name: sourceRole.name,
+                    color: sourceRole.color,
+                    hoist: sourceRole.hoist,
+                    mentionable: sourceRole.mentionable,
+                    permissions: sourceRole.permissions,
+                    reason: "Discord server transfer"
+                });
+
+                result.roles++;
+
+                console.log(`✅ Role created: ${sourceRole.name}`);
+
+            } else {
+
+                console.log(
+                    `↪️ Role already exists: ${sourceRole.name}`
+                );
+            }
+
+            roleMap.set(
+                sourceRole.id,
+                targetRole.id
             );
 
         } catch (error) {
 
             console.error(
-                `⚠️ Permission copy failed for ${sourceChannel.name}:`,
+                `❌ Role failed: ${sourceRole.name}`,
                 error.message
             );
-
         }
     }
+
+    // ==========================================
+    // CATEGORIES
+    // ==========================================
+
+    const categoryMap = new Map();
+
+    const categories = [...sourceChannels.values()]
+        .filter(channel =>
+            channel &&
+            channel.type === ChannelType.GuildCategory
+        )
+        .sort((a, b) => a.position - b.position);
+
+    console.log(`📁 Copying ${categories.length} categories...`);
+
+    for (const sourceCategory of categories) {
+
+        try {
+
+            const targetCategory =
+                await targetGuild.channels.create({
+                    name: sourceCategory.name,
+                    type: ChannelType.GuildCategory,
+                    reason: "Discord server transfer"
+                });
+
+            categoryMap.set(
+                sourceCategory.id,
+                targetCategory.id
+            );
+
+            await copyPermissionOverwrites(
+                sourceCategory,
+                targetCategory,
+                roleMap,
+                sourceGuild,
+                targetGuild
+            );
+
+            result.categories++;
+
+            console.log(
+                `✅ Category created: ${sourceCategory.name}`
+            );
+
+        } catch (error) {
+
+            console.error(
+                `❌ Category failed: ${sourceCategory.name}`,
+                error.message
+            );
+        }
+    }
+
+    // ==========================================
+    // CHANNELS
+    // ==========================================
+
+    const channels = [...sourceChannels.values()]
+        .filter(channel =>
+            channel &&
+            channel.type !== ChannelType.GuildCategory
+        )
+        .sort((a, b) => a.position - b.position);
+
+    console.log(`💬 Copying ${channels.length} channels...`);
+
+    for (const sourceChannel of channels) {
+
+        try {
+
+            const options = {
+                name: sourceChannel.name,
+                type: sourceChannel.type,
+                reason: "Discord server transfer"
+            };
+
+            // ==================================
+            // CATEGORY
+            // ==================================
+
+            if (sourceChannel.parentId) {
+
+                const newParent =
+                    categoryMap.get(sourceChannel.parentId);
+
+                if (newParent) {
+                    options.parent = newParent;
+                }
+            }
+
+            // ==================================
+            // TEXT
+            // ==================================
+
+            if (
+                sourceChannel.type ===
+                ChannelType.GuildText
+            ) {
+
+                options.topic =
+                    sourceChannel.topic || undefined;
+
+                options.nsfw =
+                    sourceChannel.nsfw;
+
+                options.rateLimitPerUser =
+                    sourceChannel.rateLimitPerUser || 0;
+            }
+
+            // ==================================
+            // ANNOUNCEMENT
+            // ==================================
+
+            if (
+                sourceChannel.type ===
+                ChannelType.GuildAnnouncement
+            ) {
+
+                options.topic =
+                    sourceChannel.topic || undefined;
+
+                options.nsfw =
+                    sourceChannel.nsfw;
+            }
+
+            // ==================================
+            // VOICE
+            // ==================================
+
+            if (
+                sourceChannel.type ===
+                ChannelType.GuildVoice
+            ) {
+
+                options.bitrate =
+                    sourceChannel.bitrate;
+
+                options.userLimit =
+                    sourceChannel.userLimit;
+            }
+
+            // ==================================
+            // STAGE
+            // ==================================
+
+            if (
+                sourceChannel.type ===
+                ChannelType.GuildStageVoice
+            ) {
+                // No extra options needed
+            }
+
+            // ==================================
+            // FORUM
+            // ==================================
+
+            if (
+                sourceChannel.type ===
+                ChannelType.GuildForum
+            ) {
+
+                options.topic =
+                    sourceChannel.topic || undefined;
+
+                options.nsfw =
+                    sourceChannel.nsfw;
+            }
+
+            // ==================================
+            // SUPPORTED CHANNEL TYPES
+            // ==================================
+
+            const supportedTypes = [
+                ChannelType.GuildText,
+                ChannelType.GuildVoice,
+                ChannelType.GuildAnnouncement,
+                ChannelType.GuildStageVoice,
+                ChannelType.GuildForum
+            ];
+
+            if (!supportedTypes.includes(sourceChannel.type)) {
+
+                console.log(
+                    `⚠️ Skipped unsupported channel: ${sourceChannel.name}`
+                );
+
+                continue;
+            }
+
+            // ==================================
+            // CREATE CHANNEL
+            // ==================================
+
+            const targetChannel =
+                await targetGuild.channels.create(options);
+
+            // ==================================
+            // COPY PERMISSIONS
+            // ==================================
+
+            await copyPermissionOverwrites(
+                sourceChannel,
+                targetChannel,
+                roleMap,
+                sourceGuild,
+                targetGuild
+            );
+
+            result.channels++;
+
+            console.log(
+                `✅ Channel created: ${sourceChannel.name}`
+            );
+
+        } catch (error) {
+
+            console.error(
+                `❌ Channel failed: ${sourceChannel.name}`,
+                error.message
+            );
+        }
+    }
+
+    // ==========================================
+    // FINISH
+    // ==========================================
+
+    console.log("");
+    console.log("====================================");
+    console.log("✅ TRANSFER FINISHED");
+    console.log(`🎭 Roles: ${result.roles}`);
+    console.log(`📁 Categories: ${result.categories}`);
+    console.log(`💬 Channels: ${result.channels}`);
+    console.log("====================================");
+
+    return result;
 }
 
-// ==============================
-// INTERACTIONS
-// ==============================
+// ==========================================
+// SLASH COMMAND
+// ==========================================
 
 client.on(Events.InteractionCreate, async interaction => {
 
-    if (!interaction.isChatInputCommand()) return;
-
-    if (interaction.commandName !== "transfer") return;
-
-    // =====================================
-    // MUST BE IN A SERVER
-    // =====================================
-
-    if (!interaction.guild) {
-
-        return interaction.reply({
-            content: "❌ אפשר להשתמש בפקודה רק בתוך שרת.",
-            ephemeral: true
-        });
-
+    if (!interaction.isChatInputCommand()) {
+        return;
     }
 
-    // =====================================
-    // ADMIN CHECK
-    // =====================================
+    if (interaction.commandName !== "transfer") {
+        return;
+    }
+
+    // ==========================================
+    // ADMIN
+    // ==========================================
 
     if (
         !interaction.member.permissions.has(
@@ -449,287 +609,271 @@ client.on(Events.InteractionCreate, async interaction => {
     ) {
 
         return interaction.reply({
-            content: "❌ אתה חייב להיות Administrator כדי להשתמש בפקודה הזאת.",
+            content:
+                "❌ אתה חייב להיות Administrator כדי להשתמש בפקודה.",
             ephemeral: true
         });
-
     }
-
-    // =====================================
-    // SOURCE SERVER
-    // =====================================
 
     const sourceId =
         interaction.options.getString("server_id");
 
-    let sourceGuild;
+    const targetGuild =
+        interaction.guild;
 
-    try {
-
-        sourceGuild =
-            await client.guilds.fetch(sourceId);
-
-    } catch {
-
-        return interaction.reply({
-            content:
-                "❌ הבוט לא נמצא בשרת המקור.\n\n" +
-                "ודא שהבוט נמצא גם בשרת שאתה רוצה להעתיק ממנו.",
-            ephemeral: true
-        });
-
-    }
-
-    const targetGuild = interaction.guild;
-
-    // =====================================
+    // ==========================================
     // SAME SERVER
-    // =====================================
+    // ==========================================
 
-    if (sourceGuild.id === targetGuild.id) {
-
-        return interaction.reply({
-            content:
-                "❌ אי אפשר להעתיק שרת אל עצמו.",
-            ephemeral: true
-        });
-
-    }
-
-    // =====================================
-    // FETCH MEMBERS / CHANNELS / ROLES
-    // =====================================
-
-    try {
-        await sourceGuild.channels.fetch();
-        await sourceGuild.roles.fetch();
-
-        await targetGuild.channels.fetch();
-        await targetGuild.roles.fetch();
-
-    } catch (error) {
-
-        console.error(error);
+    if (sourceId === targetGuild.id) {
 
         return interaction.reply({
             content:
-                "❌ הייתה בעיה בטעינת נתוני השרתים.",
+                "❌ אי אפשר להעתיק שרת לעצמו.",
             ephemeral: true
         });
-
     }
 
-    // =====================================
-    // CONFIRMATION
-    // =====================================
+    // ==========================================
+    // LOAD SOURCE
+    // ==========================================
 
-    const confirmButton = new ButtonBuilder()
-        .setCustomId(`transfer_confirm_${interaction.user.id}`)
-        .setLabel("כן, התחל העברה")
-        .setStyle(ButtonStyle.Success);
-
-    const cancelButton = new ButtonBuilder()
-        .setCustomId(`transfer_cancel_${interaction.user.id}`)
-        .setLabel("ביטול")
-        .setStyle(ButtonStyle.Danger);
-
-    const row = new ActionRowBuilder()
-        .addComponents(
-            confirmButton,
-            cancelButton
-        );
-
-    await interaction.reply({
-        content:
-            `⚠️ **אישור העברת שרת**\n\n` +
-            `📥 מקור: **${sourceGuild.name}**\n` +
-            `📤 יעד: **${targetGuild.name}**\n\n` +
-            `הבוט ייצור בשרת היעד:\n` +
-            `• תפקידים\n` +
-            `• קטגוריות\n` +
-            `• ערוצים\n` +
-            `• הרשאות ערוצים\n\n` +
-            `⚠️ ההעברה לא מוחקת את שרת המקור.\n\n` +
-            `לחץ על **כן, התחל העברה** כדי להתחיל.`,
-        components: [row],
+    await interaction.deferReply({
         ephemeral: true
     });
-});
 
-// ==============================
-// BUTTONS
-// ==============================
+    const sourceData =
+        await loadGuild(sourceId);
 
-client.on(Events.InteractionCreate, async interaction => {
+    if (!sourceData) {
 
-    if (!interaction.isButton()) return;
-
-    const customId = interaction.customId;
-
-    if (
-        !customId.startsWith("transfer_confirm_") &&
-        !customId.startsWith("transfer_cancel_")
-    ) {
-        return;
-    }
-
-    const userId = customId.split("_").pop();
-
-    if (interaction.user.id !== userId) {
-
-        return interaction.reply({
+        return interaction.editReply({
             content:
-                "❌ רק מי שהפעיל את ההעברה יכול להשתמש בכפתור הזה.",
-            ephemeral: true
+                "❌ לא מצאתי את שרת המקור.\n\n" +
+                "ודא שהבוט נמצא בשרת המקור וששלחת ID נכון."
         });
-
     }
 
-    // =====================================
-    // CANCEL
-    // =====================================
+    // ==========================================
+    // LOAD TARGET
+    // ==========================================
 
-    if (customId.startsWith("transfer_cancel_")) {
+    const targetData =
+        await loadGuild(targetGuild.id);
 
-        return interaction.update({
-            content: "❌ ההעברה בוטלה.",
-            components: []
-        });
+    if (!targetData) {
 
-    }
-
-    // =====================================
-    // CONFIRM
-    // =====================================
-
-    await interaction.update({
-        content:
-            "⏳ **מתחיל להעתיק את השרת...**\n\n" +
-            "זה יכול לקחת קצת זמן אם יש הרבה ערוצים ותפקידים.",
-        components: []
-    });
-
-    const targetGuild = interaction.guild;
-
-    // Extract source ID from interaction message isn't stored,
-    // so we recover it from the command interaction metadata.
-    // The source guild is found by reading the original command
-    // interaction from the command options isn't possible here.
-    //
-    // Therefore we store pending transfers globally.
-
-    const pending = pendingTransfers.get(interaction.user.id);
-
-    if (!pending) {
-
-        return interaction.followUp({
+        return interaction.editReply({
             content:
-                "❌ פג תוקף ההעברה. הפעל שוב `/transfer`.",
-            ephemeral: true
+                "❌ לא הצלחתי לטעון את שרת היעד."
         });
-
     }
 
-    pendingTransfers.delete(interaction.user.id);
+    console.log("");
+    console.log("SOURCE DATA:");
+    console.log(`Roles: ${sourceData.roles.size}`);
+    console.log(`Channels: ${sourceData.channels.size}`);
 
-    let sourceGuild;
-
-    try {
-
-        sourceGuild =
-            await client.guilds.fetch(pending.sourceId);
-
-    } catch {
-
-        return interaction.followUp({
-            content:
-                "❌ לא הצלחתי לגשת לשרת המקור.",
-            ephemeral: true
-        });
-
-    }
-
-    try {
-
-        const result =
-            await transferServer(
-                sourceGuild,
-                targetGuild
-            );
-
-        await interaction.followUp({
-            content:
-                `✅ **ההעברה הסתיימה!**\n\n` +
-                `📥 מקור: **${sourceGuild.name}**\n` +
-                `📤 יעד: **${targetGuild.name}**\n\n` +
-                `🎭 תפקידים: **${result.roles}**\n` +
-                `📁 קטגוריות: **${result.categories}**\n` +
-                `💬 ערוצים: **${result.channels}**\n\n` +
-                `⚠️ חברים, הודעות וקבצים ישנים לא מועתקים.`,
-            ephemeral: true
-        });
-
-    } catch (error) {
-
-        console.error(error);
-
-        await interaction.followUp({
-            content:
-                "❌ ההעברה נכשלה. בדוק שלבוט יש Administrator בשני השרתים.",
-            ephemeral: true
-        });
-
-    }
-
-});
-
-// ==============================
-// PENDING TRANSFERS
-// ==============================
-
-const pendingTransfers = new Map();
-
-// We need to save the source ID when /transfer is used.
-// Add a second listener specifically for the command.
-
-client.on(Events.InteractionCreate, async interaction => {
-
-    if (!interaction.isChatInputCommand()) return;
-
-    if (interaction.commandName !== "transfer") return;
-
-    const sourceId =
-        interaction.options.getString("server_id");
+    // ==========================================
+    // SAVE PENDING
+    // ==========================================
 
     pendingTransfers.set(
         interaction.user.id,
         {
             sourceId,
+            targetId: targetGuild.id,
             createdAt: Date.now()
         }
     );
 
-    // Automatically remove after 5 minutes
-    setTimeout(() => {
+    // ==========================================
+    // BUTTONS
+    // ==========================================
 
-        const pending =
-            pendingTransfers.get(interaction.user.id);
+    const confirm =
+        new ButtonBuilder()
+            .setCustomId(
+                `transfer_confirm_${interaction.user.id}`
+            )
+            .setLabel("כן, התחל העברה")
+            .setStyle(ButtonStyle.Success);
 
-        if (
-            pending &&
-            pending.sourceId === sourceId
-        ) {
-            pendingTransfers.delete(
-                interaction.user.id
+    const cancel =
+        new ButtonBuilder()
+            .setCustomId(
+                `transfer_cancel_${interaction.user.id}`
+            )
+            .setLabel("ביטול")
+            .setStyle(ButtonStyle.Danger);
+
+    const row =
+        new ActionRowBuilder()
+            .addComponents(
+                confirm,
+                cancel
+            );
+
+    await interaction.editReply({
+
+        content:
+            `⚠️ **אישור העברת שרת**\n\n` +
+
+            `📥 **מקור:** ${sourceData.guild.name}\n` +
+            `📤 **יעד:** ${targetGuild.name}\n\n` +
+
+            `נמצא במקור:\n` +
+            `🎭 תפקידים: **${sourceData.roles.size - 1}**\n` +
+            `📁 קטגוריות: **${[...sourceData.channels.values()].filter(c => c?.type === ChannelType.GuildCategory).length}**\n` +
+            `💬 ערוצים: **${[...sourceData.channels.values()].filter(c => c && c.type !== ChannelType.GuildCategory).length}**\n\n` +
+
+            `הבוט יעתיק את המבנה וההרשאות.\n` +
+            `השרת המקורי לא יימחק.\n\n` +
+
+            `לחץ על **כן, התחל העברה** כדי להתחיל.`,
+
+        components: [row]
+    });
+});
+
+// ==========================================
+// BUTTON HANDLER
+// ==========================================
+
+client.on(Events.InteractionCreate, async interaction => {
+
+    if (!interaction.isButton()) {
+        return;
+    }
+
+    const id =
+        interaction.customId;
+
+    if (
+        !id.startsWith("transfer_confirm_") &&
+        !id.startsWith("transfer_cancel_")
+    ) {
+        return;
+    }
+
+    const userId =
+        id.split("_").pop();
+
+    if (interaction.user.id !== userId) {
+
+        return interaction.reply({
+            content:
+                "❌ רק מי שהפעיל את ההעברה יכול להשתמש בכפתור.",
+            ephemeral: true
+        });
+    }
+
+    const pending =
+        pendingTransfers.get(userId);
+
+    if (!pending) {
+
+        return interaction.update({
+            content:
+                "❌ פג תוקף ההעברה. הפעל שוב `/transfer`.",
+            components: []
+        });
+    }
+
+    // ==========================================
+    // CANCEL
+    // ==========================================
+
+    if (id.startsWith("transfer_cancel_")) {
+
+        pendingTransfers.delete(userId);
+
+        return interaction.update({
+            content:
+                "❌ **ההעברה בוטלה.**",
+            components: []
+        });
+    }
+
+    // ==========================================
+    // START
+    // ==========================================
+
+    await interaction.update({
+        content:
+            "⏳ **מתחיל להעתיק את השרת...**\n\n" +
+            "אל תצא מהשרת ואל תפעיל העברה נוספת.",
+        components: []
+    });
+
+    try {
+
+        const sourceData =
+            await loadGuild(pending.sourceId);
+
+        const targetData =
+            await loadGuild(pending.targetId);
+
+        if (!sourceData) {
+            throw new Error(
+                "Could not load source guild"
             );
         }
 
-    }, 5 * 60 * 1000);
+        if (!targetData) {
+            throw new Error(
+                "Could not load target guild"
+            );
+        }
 
+        const result =
+            await transferServer(
+                sourceData,
+                targetData
+            );
+
+        pendingTransfers.delete(userId);
+
+        await interaction.followUp({
+
+            content:
+                `# ✅ ההעברה הסתיימה!\n\n` +
+
+                `📥 **מקור:** ${sourceData.guild.name}\n` +
+                `📤 **יעד:** ${targetData.guild.name}\n\n` +
+
+                `🎭 **תפקידים:** ${result.roles}\n` +
+                `📁 **קטגוריות:** ${result.categories}\n` +
+                `💬 **ערוצים:** ${result.channels}\n\n` +
+
+                `⚠️ חברים, הודעות ישנות וקבצים לא מועתקים.`,
+
+            ephemeral: true
+        });
+
+    } catch (error) {
+
+        console.error(
+            "❌ TRANSFER ERROR:",
+            error
+        );
+
+        pendingTransfers.delete(userId);
+
+        await interaction.followUp({
+
+            content:
+                `❌ **ההעברה נכשלה.**\n\n` +
+                `שגיאה: \`${error.message}\`\n\n` +
+                `ודא שלבוט יש **Administrator** גם בשרת המקור וגם בשרת היעד.`,
+
+            ephemeral: true
+        });
+    }
 });
 
-// ==============================
+// ==========================================
 // LOGIN
-// ==============================
+// ==========================================
 
 client.login(TOKEN);
