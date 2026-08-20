@@ -1956,3 +1956,40 @@ client.on(
 // =====================================================
 
 client.login(TOKEN);
+import ://dv8tion.com.jda.api.Permission;
+import ://dv8tion.com.jda.api.entities.channel.concrete.TextChannel;
+import ://dv8tion.com.jda.api.events.message.MessageReceivedEvent;
+import ://dv8tion.com.jda.api.hooks.ListenerAdapter;
+
+public class DiscordBotListener extends ListenerAdapter {
+
+    @Override
+    public void onMessageReceived(MessageReceivedEvent event) {
+        String message = event.getMessage().getContentRaw();
+
+        // בדיקה אם נכתבה פקודת הניקוי
+        if (message.equalsIgnoreCase("!clean")) {
+            
+            // הגנה: בדיקה אם המשתמש הוא אדמין
+            if (!event.getMember().hasPermission(Permission.ADMINISTRATOR)) {
+                event.getChannel().sendMessage("❌ אין לך הרשאה להשתמש בפקודה זו!").queue();
+                return;
+            }
+
+            event.getChannel().sendMessage("🧹 מתחיל למחוק את כל החדרים...").queue();
+
+            // לולאה שרצה על כל החדרים והקטגוריות בשרת ומוחקת אותם
+            event.getGuild().getChannels().forEach(channel -> {
+                channel.delete().queue(
+                    success -> {}, 
+                    error -> System.out.println("לא הצלחתי למחוק חדר: " + error.getMessage())
+                );
+            });
+
+            // יצירת חדר חדש ונקי כדי שהשרת לא יישאר ריק
+            event.getGuild().createTextChannel("לובי-חדש").queue(newChannel -> {
+                newChannel.sendMessage("✨ השרת נוקה בהצלחה! עכשיו אפשר להתחיל לעצב.").queue();
+            });
+        }
+    }
+}
